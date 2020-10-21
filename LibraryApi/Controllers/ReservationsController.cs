@@ -3,6 +3,7 @@ using AutoMapper.QueryableExtensions;
 using LibraryApi.Domain;
 using LibraryApi.Filters;
 using LibraryApi.Models.Reservations;
+using LibraryApi.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -17,12 +18,14 @@ namespace LibraryApi.Controllers
         private readonly LibraryDataContext _context;
         private readonly IMapper _mapper;
         private readonly MapperConfiguration _config;
+        private readonly ILogReservations _reservationLogger;
 
-        public ReservationsController(LibraryDataContext context, IMapper mapper, MapperConfiguration config)
+        public ReservationsController(LibraryDataContext context, IMapper mapper, MapperConfiguration config, ILogReservations reservationLogger)
         {
             _context = context;
             _mapper = mapper;
             _config = config;
+            _reservationLogger = reservationLogger;
         }
 
         [HttpPost("reservations")]
@@ -35,10 +38,12 @@ namespace LibraryApi.Controllers
 
             await _context.SaveChangesAsync();
             var response = _mapper.Map<ReservationDetailsResponse>(reservation);
-            
+
             //await Task.Delay(response.Items.Split(',').Count() * 1000);
             //response.AvailableOn = DateTime.Now.AddDays(1);
-            
+
+            await _reservationLogger.WriteAsync(reservation);
+
             return CreatedAtRoute("reservations#getbyid", new { id = response.Id }, response);
         }
 
@@ -50,6 +55,85 @@ namespace LibraryApi.Controllers
                 .SingleOrDefaultAsync(r => r.Id == id);
 
             return this.Maybe(reservation);
+        }
+
+
+        [HttpPost("/reservations/accepted")]
+        [ValidateModel]
+        public async Task<ActionResult> ApproveReservation([FromBody] ReservationDetailsResponse reservation)
+        {
+            var res = await _context.Reservations.SingleOrDefaultAsync(r => r.Id == reservation.Id);
+            if (res != null)
+            {
+                res.Status = ReserveationStatus.Accepted;
+                await _context.SaveChangesAsync();
+                return Ok();
+            }
+            else
+            {
+                return BadRequest();
+            }
+        }
+
+        [HttpPost("/reservations/rejected")]
+        [ValidateModel]
+        public async Task<ActionResult> RejectReservation([FromBody] ReservationDetailsResponse reservation)
+        {
+            var res = await _context.Reservations.SingleOrDefaultAsync(r => r.Id == reservation.Id);
+            if (res != null)
+            {
+                res.Status = ReserveationStatus.Rejected;
+                await _context.SaveChangesAsync();
+                return Ok();
+            }
+            else
+            {
+                return BadRequest();
+            }
+        }
+
+        [HttpGet("/reservations/accepted")]
+        public async Task<ActionResult> AcceptedReservations()
+        {
+            var data = await _context.Reservations
+                .Where(r => r.Status == ReserveationStatus.Accepted)
+                .ProjectTo<ReservationDetailsResponse>(_config)
+                .ToListAsync();
+
+            return Ok(new { data, status = ReserveationStatus.Accepted });
+        }
+
+        [HttpGet("/reservations/rejected")]
+        public async Task<ActionResult> RejectedReservations()
+        {
+            var data = await _context.Reservations
+                .Where(r => r.Status == ReserveationStatus.Rejected)
+                .ProjectTo<ReservationDetailsResponse>(_config)
+                .ToListAsync();
+
+            return Ok(new { data, status = ReserveationStatus.Rejected });
+        }
+
+        [HttpGet("/reservations")]
+        public async Task<ActionResult> AllReservations()
+        {
+            var data = await _context.Reservations
+                //.Where(r => r.Status == ReservationStatus.Rejected)
+                .ProjectTo<ReservationDetailsResponse>(_config)
+                .ToListAsync();
+
+            return Ok(new { data, status = "All" });
+        }
+
+        [HttpGet("/reservations/pending")]
+        public async Task<ActionResult> PendingReservations()
+        {
+            var data = await _context.Reservations
+               .Where(r => r.Status == ReserveationStatus.Pending)
+                .ProjectTo<ReservationDetailsResponse>(_config)
+                .ToListAsync();
+
+            return Ok(new { data, status = ReserveationStatus.Pending });
         }
     }
 }
